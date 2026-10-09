@@ -284,46 +284,63 @@ def build_ocr_response(top_matches):
     }
 
 
-def preprocess_image(image_path):
 
+def preprocess_image(image_path):
     img = cv2.imread(image_path)
 
     if img is None:
         return None
 
-    gray = cv2.cvtColor(
-        img,
-        cv2.COLOR_BGR2GRAY
-    )
+    try:
+        # تقليل أبعاد الصور الكبيرة لتخفيف استهلاك الذاكرة
+        height, width = img.shape[:2]
+        max_side = 1200
 
-    enlarged = cv2.resize(
-        gray,
-        None,
-        fx=3,
-        fy=3,
-        interpolation=cv2.INTER_CUBIC
-    )
+        scale = min(1.0, max_side / max(height, width))
 
-    clahe = cv2.createCLAHE(
-        clipLimit=2.0,
-        tileGridSize=(8, 8)
-    )
+        if scale < 1.0:
+            new_width = max(1, int(width * scale))
+            new_height = max(1, int(height * scale))
 
-    enhanced = clahe.apply(enlarged)
+            img = cv2.resize(
+                img,
+                (new_width, new_height),
+                interpolation=cv2.INTER_AREA
+            )
 
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".jpg"
-    )
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    temp_file.close()
+        clahe = cv2.createCLAHE(
+            clipLimit=2.0,
+            tileGridSize=(8, 8)
+        )
 
-    cv2.imwrite(
-        temp_file.name,
-        enhanced
-    )
+        enhanced = clahe.apply(gray)
 
-    return temp_file.name
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".jpg"
+        )
+
+        try:
+            temp_path = temp_file.name
+        finally:
+            temp_file.close()
+
+        success = cv2.imwrite(
+            temp_path,
+            enhanced,
+            [cv2.IMWRITE_JPEG_QUALITY, 85]
+        )
+
+        if not success:
+            os.remove(temp_path)
+            return None
+
+        return temp_path
+
+    finally:
+        del img
 
 
 def process_medicine_image(image_path):
