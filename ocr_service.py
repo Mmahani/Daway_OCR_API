@@ -7,13 +7,42 @@ from difflib import SequenceMatcher
 from paddleocr import PaddleOCR
 
 
-ocr = PaddleOCR(
-    lang="ar",
-    ocr_version="PP-OCRv3",
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False
-)
+ocr = None
+ocr_error = None
+
+
+def get_ocr():
+
+    global ocr, ocr_error
+
+    if ocr is None and ocr_error is None:
+
+        try:
+
+            ocr = PaddleOCR(
+                lang="ar",
+                ocr_version="PP-OCRv3",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False
+            )
+
+        except Exception as error:
+            ocr_error = error
+
+    if ocr is None:
+
+        raise RuntimeError(
+            "تعذر تحميل نموذج OCR: "
+            + str(ocr_error)
+        )
+
+    return ocr
+
+
+def is_model_loaded():
+
+    return ocr is not None
 
 
 # قاعدة بيانات مؤقتة
@@ -101,7 +130,7 @@ def clean_ocr_text(text):
 
 
 def read_medicine_image(image_path):
-    results = ocr.predict(image_path)
+    results = get_ocr().predict(image_path)
 
     detected_texts = []
 
@@ -344,6 +373,22 @@ def preprocess_image(image_path):
 
 
 def process_medicine_image(image_path):
+
+    if cv2.imread(image_path) is None:
+
+        return {
+            "source": "ocr",
+            "intent": "search_medicine",
+            "drug_name": None,
+            "symptoms": [],
+            "ocr_success": False,
+            "status": "not_found",
+            "best_candidate": None,
+            "match_score": 0,
+            "message": (
+                "تعذر قراءة الصورة"
+            )
+        }
 
     original_texts = read_medicine_image(
         image_path
