@@ -9,8 +9,12 @@ Run:  python -m unittest discover -s tests
 """
 import os
 import sys
+import tempfile
 import types
 import unittest
+
+import cv2
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -20,9 +24,11 @@ sys.modules.setdefault("paddleocr", fake_paddle)
 
 from ocr_service import (  # noqa: E402
     build_ocr_response,
+    downscale_if_needed,
     drug_database,
     get_top_matches,
     normalize_for_match,
+    preprocess_image,
     process_medicine_image,
 )
 
@@ -121,6 +127,79 @@ class UnreadableImageTest(unittest.TestCase):
         self.assertFalse(res["ocr_success"])
         self.assertEqual(res["source"], "ocr")
         self.assertEqual(res["intent"], "search_medicine")
+
+
+class DebugFieldsTest(unittest.TestCase):
+
+    def setUp(self):
+        self._old = os.environ.get("DEBUG_OCR")
+        os.environ["DEBUG_OCR"] = "true"
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        if self._old is None:
+            os.environ.pop("DEBUG_OCR", None)
+        else:
+            os.environ["DEBUG_OCR"] = self._old
+
+    def test_debug_off_hides_fields(self):
+        os.environ["DEBUG_OCR"] = "false"
+        res = process_medicine_image(os.path.join("nope", "missing.jpg"))
+
+        self.assertNotIn("raw_texts", res)
+        self.assertNotIn("top_matches", res)
+
+    def test_debug_on_shows_fields(self):
+        res = process_medicine_image(os.path.join("nope", "missing.jpg"))
+
+        self.assertIn("raw_texts", res)
+        self.assertIn("top_matches", res)
+        self.assertEqual(res["raw_texts"], [])
+        self.assertEqual(res["top_matches"], [])
+
+
+class ImageSizeTest(unittest.TestCase):
+
+    def _write_image(self, width, height):
+        img = np.zeros((height, width, 3), dtype=np.uint8)
+        path = os.path.join(tempfile.gettempdir(), "ocr_size_test.jpg")
+        cv2.imwrite(path, img)
+        self.addCleanup(
+            lambda: os.path.exists(path) and os.remove(path)
+        )
+
+        return path
+
+    def test_small_image_kept_as_is(self):
+        path = self._write_image(100, 80)
+        used, temp = downscale_if_needed(path)
+
+        self.assertEqual(used, path)
+        self.assertIsNone(temp)
+
+    def test_large_image_downscaled(self):
+        path = self._write_image(2000, 1000)
+        used, temp = downscale_if_needed(path)
+        self.addCleanup(
+            lambda: temp and os.path.exists(temp) and os.remove(temp)
+        )
+
+        img = cv2.imread(used)
+
+        self.assertLessEqual(max(img.shape[:2]), 1600)
+
+    def test_preprocess_respects_cap(self):
+        path = self._write_image(200, 200)
+        out = preprocess_image(path)
+        self.addCleanup(
+            lambda: out and os.path.exists(out) and os.remove(out)
+        )
+
+        self.assertIsNotNone(out)
+
+        img = cv2.imread(out)
+
+        self.assertLessEqual(max(img.shape[:2]), 1600)
 
 
 if __name__ == "__main__":

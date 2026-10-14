@@ -1,0 +1,60 @@
+[
+    {
+        "brand": "Panadol",
+        "brand_aliases": ["Panadol", "بانادول", "بنادول"],
+        "active_ingredients": ["Paracetamol", "باراسيتامول"]
+    },
+    {
+        "brand": "Brufen",
+        "brand_aliases": ["Brufen", "بروفين"],
+        "active_ingredients": ["Ibuprofen", "ايبوبروفين", "إيبوبروفين"]
+    },
+    {
+        "brand": "Augmentin",
+        "brand_aliases": [
+            "Augmentin",
+            "اوجمنتين",
+            "أوجمنتين",
+            "اوجمين"
+        ],
+        "active_ingredients": [
+            "Amoxicillin",
+            "Clavulanic",
+            "اموكسيسيلين"
+        ]
+    },
+    {
+        "brand": "Voltaren",
+        "brand_aliases": ["Voltaren", "فولتارين"],
+        "active_ingredients": ["Diclofenac", "ديكلوفيناك"]
+    },
+    {
+        "brand": "Cipralex",
+        "brand_aliases": ["Cipralex", "سيبرالكس"],
+        "active_ingredients": ["Escitalopram", "اسيتالوبرام"]
+    },
+    {
+        "brand": "Zoloft",
+        "brand_aliases": ["Zoloft", "زولوفت"],
+        "active_ingredients": ["Sertraline", "سيرترالين"]
+    },
+    {
+        "brand": "Amaryl",
+        "brand_aliases": ["Amaryl", "اماريل", "أماريل"],
+        "active_ingredients": ["Glimepiride", "جليميبرايد"]
+    },
+    {
+        "brand": "Concor",
+        "brand_aliases": ["Concor", "كونكور"],
+        "active_ingredients": ["Bisoprolol", "بيسوبرولول"]
+    },
+    {
+        "brand": "Glucophage",
+        "brand_aliases": [
+            "Glucophage",
+            "جلوكوفاج",
+            "غلوكوفاج"
+        ],
+        "active_ingredients": ["Metformin", "ميتفورمين"]
+    }
+]

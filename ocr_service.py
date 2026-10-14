@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import re
 import cv2
@@ -5,6 +7,11 @@ import tempfile
 
 from difflib import SequenceMatcher
 from paddleocr import PaddleOCR
+
+
+logger = logging.getLogger(__name__)
+
+MAX_SIDE = 1600
 
 
 ocr = None
@@ -45,68 +52,32 @@ def is_model_loaded():
     return ocr is not None
 
 
-# قاعدة بيانات مؤقتة
-# لاحقاً سيتم استبدالها ببيانات Laravel
-drug_database = [
-    {
-        "brand": "Panadol",
-        "brand_aliases": ["Panadol", "بانادول", "بنادول"],
-        "active_ingredients": ["Paracetamol", "باراسيتامول"]
-    },
-    {
-        "brand": "Brufen",
-        "brand_aliases": ["Brufen", "بروفين"],
-        "active_ingredients": ["Ibuprofen", "ايبوبروفين", "إيبوبروفين"]
-    },
-    {
-        "brand": "Augmentin",
-        "brand_aliases": [
-            "Augmentin",
-            "اوجمنتين",
-            "أوجمنتين",
-            "اوجمين"
-        ],
-        "active_ingredients": [
-            "Amoxicillin",
-            "Clavulanic",
-            "اموكسيسيلين"
-        ]
-    },
-    {
-        "brand": "Voltaren",
-        "brand_aliases": ["Voltaren", "فولتارين"],
-        "active_ingredients": ["Diclofenac", "ديكلوفيناك"]
-    },
-    {
-        "brand": "Cipralex",
-        "brand_aliases": ["Cipralex", "سيبرالكس"],
-        "active_ingredients": ["Escitalopram", "اسيتالوبرام"]
-    },
-    {
-        "brand": "Zoloft",
-        "brand_aliases": ["Zoloft", "زولوفت"],
-        "active_ingredients": ["Sertraline", "سيرترالين"]
-    },
-    {
-        "brand": "Amaryl",
-        "brand_aliases": ["Amaryl", "اماريل", "أماريل"],
-        "active_ingredients": ["Glimepiride", "جليميبرايد"]
-    },
-    {
-        "brand": "Concor",
-        "brand_aliases": ["Concor", "كونكور"],
-        "active_ingredients": ["Bisoprolol", "بيسوبرولول"]
-    },
-    {
-        "brand": "Glucophage",
-        "brand_aliases": [
-            "Glucophage",
-            "جلوكوفاج",
-            "غلوكوفاج"
-        ],
-        "active_ingredients": ["Metformin", "ميتفورمين"]
-    }
-]
+# قاعدة بيانات الأدوية
+# تُحمّل من drugs.json عند بدء التشغيل
+def load_drug_database():
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "drugs.json"
+    )
+
+    with open(path, encoding="utf-8") as drugs_file:
+        return json.load(drugs_file)
+
+
+drug_database = load_drug_database()
+
+logger.info(
+    "Loaded %d drugs from drugs.json",
+    len(drug_database)
+)
+
+
+def debug_enabled():
+
+    return os.environ.get(
+        "DEBUG_OCR",
+        ""
+    ).lower() == "true"
 
 
 def get_ocr_data(result):
@@ -148,6 +119,11 @@ def read_medicine_image(image_path):
                     "text": cleaned,
                     "confidence": round(float(score), 3)
                 })
+
+    logger.info(
+        "OCR detected texts: %s",
+        [item["text"] for item in detected_texts]
+    )
 
     return detected_texts
 
@@ -314,6 +290,62 @@ def build_ocr_response(top_matches):
 
 
 
+def downscale_if_needed(image_path):
+    """Returns (path_to_use, temp_path_to_delete_or_None)."""
+
+    img = cv2.imread(image_path)
+
+    if img is None:
+        return None, None
+
+    height, width = img.shape[:2]
+
+    if max(height, width) <= MAX_SIDE:
+        return image_path, None
+
+    scale = MAX_SIDE / max(height, width)
+
+    resized = cv2.resize(
+        img,
+        (
+            max(1, int(width * scale)),
+            max(1, int(height * scale))
+        ),
+        interpolation=cv2.INTER_AREA
+    )
+
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".jpg"
+    )
+
+    temp_path = temp_file.name
+    temp_file.close()
+
+    success = cv2.imwrite(
+        temp_path,
+        resized,
+        [cv2.IMWRITE_JPEG_QUALITY, 85]
+    )
+
+    if not success:
+        logger.warning(
+            "Downscale write failed, using original image"
+        )
+        os.remove(temp_path)
+
+        return image_path, None
+
+    logger.info(
+        "Downscaled image %dx%d -> %s",
+        width,
+        height,
+        temp_path
+    )
+
+    return temp_path, temp_path
+
+
 def preprocess_image(image_path):
     img = cv2.imread(image_path)
 
@@ -321,23 +353,25 @@ def preprocess_image(image_path):
         return None
 
     try:
-        # تقليل أبعاد الصور الكبيرة لتخفيف استهلاك الذاكرة
         height, width = img.shape[:2]
-        max_side = 1200
 
-        scale = min(1.0, max_side / max(height, width))
-
-        if scale < 1.0:
-            new_width = max(1, int(width * scale))
-            new_height = max(1, int(height * scale))
-
-            img = cv2.resize(
-                img,
-                (new_width, new_height),
-                interpolation=cv2.INTER_AREA
-            )
+        scale = min(3, MAX_SIDE / max(height, width))
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        if scale != 1.0:
+            gray = cv2.resize(
+                gray,
+                (
+                    max(1, int(width * scale)),
+                    max(1, int(height * scale))
+                ),
+                interpolation=(
+                    cv2.INTER_CUBIC
+                    if scale > 1.0
+                    else cv2.INTER_AREA
+                )
+            )
 
         clahe = cv2.createCLAHE(
             clipLimit=2.0,
@@ -374,9 +408,13 @@ def preprocess_image(image_path):
 
 def process_medicine_image(image_path):
 
-    if cv2.imread(image_path) is None:
+    ocr_path, downscaled_temp = downscale_if_needed(
+        image_path
+    )
 
-        return {
+    if ocr_path is None:
+
+        response = {
             "source": "ocr",
             "intent": "search_medicine",
             "drug_name": None,
@@ -390,107 +428,157 @@ def process_medicine_image(image_path):
             )
         }
 
-    original_texts = read_medicine_image(
-        image_path
-    )
+        if debug_enabled():
+            response["raw_texts"] = []
+            response["top_matches"] = []
 
-    if original_texts:
+        return response
 
-        original_matches = get_top_matches(
-            original_texts,
-            drug_database,
-            top_n=3
+    try:
+
+        original_texts = read_medicine_image(
+            ocr_path
         )
 
-        original_result = build_ocr_response(
-            original_matches
-        )
+        if original_texts:
 
-    else:
-        original_result = None
+            original_matches = get_top_matches(
+                original_texts,
+                drug_database,
+                top_n=3
+            )
 
-    # إذا النتيجة الأصلية مؤكدة
-    # لا نحتاج لتحسين الصورة
-    if (
-        original_result
-        and original_result.get("status")
-        == "confirmed"
-    ):
-        result = original_result
+            original_result = build_ocr_response(
+                original_matches
+            )
 
-    else:
+        else:
+            original_result = None
 
-        enhanced_path = preprocess_image(
-            image_path
-        )
+        # إذا النتيجة الأصلية مؤكدة
+        # لا نحتاج لتحسين الصورة
+        if (
+            original_result
+            and original_result.get("status")
+            == "confirmed"
+        ):
+            winner = (
+                original_result,
+                original_texts,
+                original_matches
+                if original_texts
+                else []
+            )
 
-        try:
+        else:
 
-            if enhanced_path:
+            enhanced_path = preprocess_image(
+                ocr_path
+            )
 
-                enhanced_texts = (
-                    read_medicine_image(
+            try:
+
+                if enhanced_path:
+
+                    enhanced_texts = (
+                        read_medicine_image(
+                            enhanced_path
+                        )
+                    )
+
+                else:
+                    enhanced_texts = []
+
+                if enhanced_texts:
+
+                    enhanced_matches = (
+                        get_top_matches(
+                            enhanced_texts,
+                            drug_database,
+                            top_n=3
+                        )
+                    )
+
+                    enhanced_result = (
+                        build_ocr_response(
+                            enhanced_matches
+                        )
+                    )
+
+                else:
+                    enhanced_result = None
+
+                if original_result is None:
+                    winner = (
+                        enhanced_result,
+                        enhanced_texts,
+                        enhanced_matches
+                        if enhanced_texts
+                        else []
+                    )
+
+                elif enhanced_result is None:
+                    winner = (
+                        original_result,
+                        original_texts,
+                        original_matches
+                        if original_texts
+                        else []
+                    )
+
+                elif (
+                    enhanced_result.get(
+                        "match_score",
+                        0
+                    )
+                    >
+                    original_result.get(
+                        "match_score",
+                        0
+                    )
+                ):
+                    winner = (
+                        enhanced_result,
+                        enhanced_texts,
+                        enhanced_matches
+                        if enhanced_texts
+                        else []
+                    )
+
+                else:
+                    winner = (
+                        original_result,
+                        original_texts,
+                        original_matches
+                        if original_texts
+                        else []
+                    )
+
+            finally:
+
+                if (
+                    enhanced_path
+                    and os.path.exists(
                         enhanced_path
                     )
-                )
+                ):
+                    os.remove(enhanced_path)
 
-            else:
-                enhanced_texts = []
-
-            if enhanced_texts:
-
-                enhanced_matches = (
-                    get_top_matches(
-                        enhanced_texts,
-                        drug_database,
-                        top_n=3
-                    )
-                )
-
-                enhanced_result = (
-                    build_ocr_response(
-                        enhanced_matches
-                    )
-                )
-
-            else:
-                enhanced_result = None
-
-            if original_result is None:
-                result = enhanced_result
-
-            elif enhanced_result is None:
-                result = original_result
-
-            elif (
-                enhanced_result.get(
-                    "match_score",
-                    0
-                )
-                >
-                original_result.get(
-                    "match_score",
-                    0
-                )
-            ):
-                result = enhanced_result
-
-            else:
-                result = original_result
-
-        finally:
+    finally:
 
             if (
-                enhanced_path
+                downscaled_temp
                 and os.path.exists(
-                    enhanced_path
+                    downscaled_temp
                 )
             ):
-                os.remove(enhanced_path)
+                os.remove(downscaled_temp)
+
+    result, winning_texts, winning_matches = winner
 
     if result is None:
 
-        return {
+        response = {
             "source": "ocr",
             "intent": "search_medicine",
             "drug_name": None,
@@ -505,7 +593,17 @@ def process_medicine_image(image_path):
             )
         }
 
-    return {
+        if debug_enabled():
+            response["raw_texts"] = []
+            response["top_matches"] = []
+
+        logger.info(
+            "OCR final: status=not_found"
+        )
+
+        return response
+
+    response = {
         "source": "ocr",
         "intent": "search_medicine",
         "drug_name": result.get(
@@ -528,3 +626,16 @@ def process_medicine_image(image_path):
             "message"
         )
     }
+
+    if debug_enabled():
+        response["raw_texts"] = winning_texts
+        response["top_matches"] = winning_matches
+
+    logger.info(
+        "OCR final: status=%s drug=%s score=%s",
+        response["status"],
+        response["drug_name"],
+        response["match_score"]
+    )
+
+    return response

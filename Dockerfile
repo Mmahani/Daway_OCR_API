@@ -21,7 +21,14 @@ COPY . .
 RUN useradd --create-home appuser \
     && chown -R appuser:appuser /app
 
+ENV HOME=/home/appuser
+ENV DISABLE_MODEL_SOURCE_CHECK=True
+
 USER appuser
+
+# Pre-download PaddleOCR models at build time so first
+# boot and first request don't pay the download cost.
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='ar', ocr_version='PP-OCRv3', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)"
 
 EXPOSE 10000
 

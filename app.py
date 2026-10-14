@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import tempfile
 
@@ -13,29 +14,48 @@ from fastapi import (
     Header
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+
 from ocr_service import (
-    process_medicine_image,
-    is_model_loaded
+    process_medicine_image
 )
 
 
-MAX_IMAGE_BYTES = int(
-    os.environ.get("MAX_IMAGE_MB", "10")
-) * 1024 * 1024
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO")
+)
+
+logger = logging.getLogger(__name__)
+
+
+MAX_IMAGE_MB = int(
+    os.environ.get("MAX_IMAGE_MB", "5")
+)
+
+MAX_IMAGE_BYTES = MAX_IMAGE_MB * 1024 * 1024
 
 OCR_TIMEOUT_SEC = float(
     os.environ.get("OCR_TIMEOUT_SEC", "120")
 )
 
 API_KEY = os.environ.get(
-    "OCR_API_KEY",
+    "API_KEY",
     ""
 )
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        ""
+    ).split(",")
+    if origin.strip()
+]
 
 
 def check_api_key(x_api_key: str | None):
 
-    if API_KEY and x_api_key != API_KEY:
+    if not API_KEY or x_api_key != API_KEY:
 
         raise HTTPException(
             status_code=401,
@@ -46,6 +66,14 @@ def check_api_key(x_api_key: str | None):
 app = FastAPI(
     title="Daway Medicine OCR API",
     version="1.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
 )
 
 
@@ -61,11 +89,8 @@ def home():
 @app.get("/health")
 def health():
 
-    loaded = is_model_loaded()
-
     return {
-        "status": "ok" if loaded else "starting",
-        "model_loaded": loaded
+        "status": "ok"
     }
 
 
@@ -114,7 +139,10 @@ async def medicine_ocr(
 
             raise HTTPException(
                 status_code=413,
-                detail="حجم الصورة كبير، الحد الأقصى 10MB"
+                detail=(
+                    "حجم الصورة كبير، "
+                    f"الحد الأقصى {MAX_IMAGE_MB}MB"
+                )
             )
 
         if cv2.imdecode(
@@ -139,31 +167,35 @@ async def medicine_ocr(
 
             temp_path = temp_file.name
 
-        result = await asyncio.wait_for(
-            asyncio.to_thread(
-                process_medicine_image,
-                temp_path
-            ),
-            timeout=OCR_TIMEOUT_SEC
-        )
+        try:
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    process_medicine_image,
+                    temp_path
+                ),
+                timeout=OCR_TIMEOUT_SEC
+            )
+
+        except asyncio.TimeoutError:
+
+            raise HTTPException(
+                status_code=504,
+                detail="انتهت مهلة معالجة الصورة، حاول مجدداً"
+            )
 
         return result
-
-    except asyncio.TimeoutError:
-
-        raise HTTPException(
-            status_code=504,
-            detail="انتهت مهلة معالجة الصورة، حاول مجدداً"
-        )
 
     except HTTPException:
         raise
 
-    except Exception as error:
+    except Exception:
+
+        logger.exception("OCR request failed")
 
         raise HTTPException(
             status_code=500,
-            detail=str(error)
+            detail="حدث خطأ أثناء معالجة الصورة"
         )
 
     finally:
