@@ -11,6 +11,8 @@ FastAPI service that reads a medicine package photo (Arabic / Latin) and returns
 | `DEBUG_OCR` | no | `false` | Set `true` to include `raw_texts` + `top_matches` in the response |
 | `MAX_IMAGE_MB` | no | `5` | Max upload size (413 beyond) |
 | `OCR_TIMEOUT_SEC` | no | `120` | OCR processing timeout (504 beyond) |
+| `OCR_SINGLE_PASS` | no | `false` | Set `true` on small instances: single OCR pass instead of original + enhanced |
+| `OCR_MAX_SIDE` | no | `1600` | Longest side cap in px (downscale before OCR); lower it (e.g. `1000`) on 512MB RAM |
 | `PORT` | no (Render injects it) | `10000` | Serve port |
 
 Copy `.env.example` to `.env` for local use.

@@ -11,7 +11,15 @@ from paddleocr import PaddleOCR
 
 logger = logging.getLogger(__name__)
 
-MAX_SIDE = 1600
+
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_SIDE = _env_int("OCR_MAX_SIDE", 1600)
 
 
 ocr = None
@@ -76,6 +84,15 @@ def debug_enabled():
 
     return os.environ.get(
         "DEBUG_OCR",
+        ""
+    ).lower() == "true"
+
+
+def single_pass_enabled():
+    # Fast mode for small instances (e.g. 512MB): a single OCR pass
+    # instead of original + enhanced. Enable via OCR_SINGLE_PASS=true.
+    return os.environ.get(
+        "OCR_SINGLE_PASS",
         ""
     ).lower() == "true"
 
@@ -436,123 +453,39 @@ def process_medicine_image(image_path):
 
     try:
 
-        original_texts = read_medicine_image(
-            ocr_path
-        )
-
-        if original_texts:
-
-            original_matches = get_top_matches(
-                original_texts,
-                drug_database,
-                top_n=3
-            )
-
-            original_result = build_ocr_response(
-                original_matches
-            )
-
-        else:
-            original_result = None
-
-        # إذا النتيجة الأصلية مؤكدة
-        # لا نحتاج لتحسين الصورة
-        if (
-            original_result
-            and original_result.get("status")
-            == "confirmed"
-        ):
-            winner = (
-                original_result,
-                original_texts,
-                original_matches
-                if original_texts
-                else []
-            )
-
-        else:
-
+        if single_pass_enabled():
+            # Fast mode: single OCR pass on the enhanced image.
             enhanced_path = preprocess_image(
                 ocr_path
             )
 
             try:
 
-                if enhanced_path:
+                fast_texts = read_medicine_image(
+                    enhanced_path or ocr_path
+                )
 
-                    enhanced_texts = (
-                        read_medicine_image(
-                            enhanced_path
-                        )
+                if fast_texts:
+
+                    fast_matches = get_top_matches(
+                        fast_texts,
+                        drug_database,
+                        top_n=3
+                    )
+
+                    fast_result = build_ocr_response(
+                        fast_matches
                     )
 
                 else:
-                    enhanced_texts = []
+                    fast_result = None
+                    fast_matches = []
 
-                if enhanced_texts:
-
-                    enhanced_matches = (
-                        get_top_matches(
-                            enhanced_texts,
-                            drug_database,
-                            top_n=3
-                        )
-                    )
-
-                    enhanced_result = (
-                        build_ocr_response(
-                            enhanced_matches
-                        )
-                    )
-
-                else:
-                    enhanced_result = None
-
-                if original_result is None:
-                    winner = (
-                        enhanced_result,
-                        enhanced_texts,
-                        enhanced_matches
-                        if enhanced_texts
-                        else []
-                    )
-
-                elif enhanced_result is None:
-                    winner = (
-                        original_result,
-                        original_texts,
-                        original_matches
-                        if original_texts
-                        else []
-                    )
-
-                elif (
-                    enhanced_result.get(
-                        "match_score",
-                        0
-                    )
-                    >
-                    original_result.get(
-                        "match_score",
-                        0
-                    )
-                ):
-                    winner = (
-                        enhanced_result,
-                        enhanced_texts,
-                        enhanced_matches
-                        if enhanced_texts
-                        else []
-                    )
-
-                else:
-                    winner = (
-                        original_result,
-                        original_texts,
-                        original_matches
-                        if original_texts
-                        else []
-                    )
+                winner = (
+                    fast_result,
+                    fast_texts,
+                    fast_matches
+                )
 
             finally:
 
@@ -563,6 +496,136 @@ def process_medicine_image(image_path):
                     )
                 ):
                     os.remove(enhanced_path)
+
+        else:
+
+            original_texts = read_medicine_image(
+                ocr_path
+            )
+
+            if original_texts:
+
+                original_matches = get_top_matches(
+                    original_texts,
+                    drug_database,
+                    top_n=3
+                )
+
+                original_result = build_ocr_response(
+                    original_matches
+                )
+
+            else:
+                original_result = None
+
+            # إذا النتيجة الأصلية مؤكدة
+            # لا نحتاج لتحسين الصورة
+            if (
+                original_result
+                and original_result.get("status")
+                == "confirmed"
+            ):
+                winner = (
+                    original_result,
+                    original_texts,
+                    original_matches
+                    if original_texts
+                    else []
+                )
+
+            else:
+
+                enhanced_path = preprocess_image(
+                    ocr_path
+                )
+
+                try:
+
+                    if enhanced_path:
+
+                        enhanced_texts = (
+                            read_medicine_image(
+                                enhanced_path
+                            )
+                        )
+
+                    else:
+                        enhanced_texts = []
+
+                    if enhanced_texts:
+
+                        enhanced_matches = (
+                            get_top_matches(
+                                enhanced_texts,
+                                drug_database,
+                                top_n=3
+                            )
+                        )
+
+                        enhanced_result = (
+                            build_ocr_response(
+                                enhanced_matches
+                            )
+                        )
+
+                    else:
+                        enhanced_result = None
+
+                    if original_result is None:
+                        winner = (
+                            enhanced_result,
+                            enhanced_texts,
+                            enhanced_matches
+                            if enhanced_texts
+                            else []
+                        )
+
+                    elif enhanced_result is None:
+                        winner = (
+                            original_result,
+                            original_texts,
+                            original_matches
+                            if original_texts
+                            else []
+                        )
+
+                    elif (
+                        enhanced_result.get(
+                            "match_score",
+                            0
+                        )
+                        >
+                        original_result.get(
+                            "match_score",
+                            0
+                        )
+                    ):
+                        winner = (
+                            enhanced_result,
+                            enhanced_texts,
+                            enhanced_matches
+                            if enhanced_texts
+                            else []
+                        )
+
+                    else:
+                        winner = (
+                            original_result,
+                            original_texts,
+                            original_matches
+                            if original_texts
+                            else []
+                        )
+
+                finally:
+
+                    if (
+                        enhanced_path
+                        and os.path.exists(
+                            enhanced_path
+                        )
+                    ):
+                        os.remove(enhanced_path)
 
     finally:
 
